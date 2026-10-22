@@ -4,27 +4,69 @@ from .config import LLM_MODEL, KB
 
 
 class PlantBrain:
+    """Local GGUF assistant with a knowledge-base fallback."""
     def __init__(self):
         self.llm = None
+        self.llm_error = None
         self.kb = json.loads(KB.read_text(encoding="utf-8")) if KB.exists() else {}
         if LLM_MODEL.exists():
             try:
                 from llama_cpp import Llama
                 self.llm = Llama(model_path=str(LLM_MODEL), n_ctx=2048, n_threads=4, verbose=False)
-            except Exception:
-                self.llm = None
+            except Exception as exc:
+                self.llm_error = str(exc)
+        else:
+            self.llm_error = f"Local GGUF model not found: {LLM_MODEL}"
 
     def context(self, vision=None, sensors=None):
-        return json.dumps({"plant_knowledge": self.kb, "vision": vision or [], "sensors": sensors or {}}, ensure_ascii=False)
+        return json.dumps({"plant_knowledge": self.kb, "vision": vision or [], "sensors": sensors or {}},
+                          ensure_ascii=False)
+
+    def _knowledge_fallback(self, question, vision=None, sensors=None):
+        q = question.casefold()
+        matches = []
+        for key, entry in self.kb.items():
+            names = [key, entry.get("common_name", ""), entry.get("scientific_name", "")]
+            if any(name and name.casefold() in q for name in names):
+                matches.append((key, entry))
+        if not matches:
+            matches = [(key, entry) for key, entry in self.kb.items()
+                       if any(word in q for word in key.casefold().replace("_", " ").split())]
+        if matches:
+            key, plant = matches[0]
+            lines = [f"Plant knowledge base: {plant.get('common_name', key)}",
+                     f"Scientific name: {plant.get('scientific_name', 'not listed')}"]
+            for field, label in [("water", "Water"), ("light", "Light"),
+                                 ("soil", "Soil"), ("nutrition", "Nutrition")]:
+                if plant.get(field):
+                    lines.append(f"{label}: {plant[field]}")
+            if plant.get("problems"):
+                lines.append("Known problems: " + ", ".join(plant["problems"]))
+            lines.append("Local knowledge-base lookup only; confirm disease and fertiliser decisions with evidence.")
+            return "\n".join(lines)
+
+        names = sorted({entry.get("common_name", key) for key, entry in self.kb.items()})
+        lines = ["The local language model is unavailable, so a generated answer cannot be provided.",
+                 "Try a plant covered by the local knowledge base: " + ", ".join(names)]
+        if vision:
+            best = vision[0]
+            lines.append(f"Latest vision result: {best.get('label', 'unknown')} "
+                         f"({best.get('confidence', 0):.1%}). This is a prediction, not certainty.")
+        if sensors:
+            known = [f"{key}={value}" for key, value in sensors.items() if value is not None]
+            if known:
+                lines.append("Entered sensor readings: " + ", ".join(known))
+        lines.append("LLM status: " + (self.llm_error or "not loaded"))
+        return "\n".join(lines)
 
     def ask(self, question: str, vision=None, sensors=None) -> str:
         if not self.llm:
-            return "Local language model is not installed yet. Run bootstrap_models.ps1. The plant knowledge base and sensor system are available offline."
-        prompt = ("You are Plantinia, an offline plant-care assistant. Use only the supplied local context for plant-specific claims. "
-                  "Be practical, cautious, and concise. Never claim a visual diagnosis is certain.\n\n"
+            return self._knowledge_fallback(question, vision, sensors)
+        prompt = ("You are Plantinia, an offline plant-care assistant. Use only the supplied local context "
+                  "for plant-specific claims. Be practical and cautious; never claim a visual diagnosis is certain.\n\n"
                   f"LOCAL CONTEXT:\n{self.context(vision, sensors)}\n\nUSER:\n{question}")
-        out = self.llm.create_chat_completion(messages=[
-            {"role":"system","content":"You are Plantinia Offline."},
-            {"role":"user","content":prompt}
-        ], max_tokens=350, temperature=0.2)
-        return out["choices"][0]["message"]["content"].strip()
+        output = self.llm.create_chat_completion(
+            messages=[{"role": "system", "content": "You are Plantinia Offline."},
+                      {"role": "user", "content": prompt}],
+            max_tokens=350, temperature=0.2)
+        return output["choices"][0]["message"]["content"].strip()
