@@ -1,6 +1,6 @@
 from __future__ import annotations
 import sys
-from pathlib import Path
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,
     QPushButton,QTextEdit,QFileDialog,QTabWidget,QGroupBox,QFormLayout,QDoubleSpinBox,QComboBox,QMessageBox)
 from PySide6.QtGui import QPixmap
@@ -10,7 +10,6 @@ from .llm import PlantBrain
 from .robot import ArmController
 from .sensors import SensorHub
 
-
 class PlantiniaWindow(QMainWindow):
     def __init__(self):
         super().__init__(); self.setWindowTitle("Plantinia Offline"); self.resize(1100,720)
@@ -18,13 +17,13 @@ class PlantiniaWindow(QMainWindow):
         tabs=QTabWidget(); tabs.addTab(self.diagnose_tab(),"Plant Vision"); tabs.addTab(self.brain_tab(),"Plant Brain"); tabs.addTab(self.soil_tab(),"Soil & Sensors"); tabs.addTab(self.robot_tab(),"5-DOF Robot"); self.setCentralWidget(tabs)
 
     def diagnose_tab(self):
-        w=QWidget(); l=QVBoxLayout(w); self.image=QLabel("Load a plant image"); self.image.setMinimumHeight(360); self.image.setAlignment(Qt.AlignmentFlag.AlignCenter) if False else None
+        w=QWidget(); l=QVBoxLayout(w); self.image=QLabel("Load a plant image"); self.image.setMinimumHeight(360); self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.vision_out=QTextEdit(); self.vision_out.setReadOnly(True); b=QPushButton("Open image and diagnose"); b.clicked.connect(self.diagnose); l.addWidget(self.image); l.addWidget(b); l.addWidget(self.vision_out); return w
 
     def diagnose(self):
         path,_=QFileDialog.getOpenFileName(self,"Plant image",filter="Images (*.jpg *.jpeg *.png *.bmp)")
         if not path:return
-        self.image.setPixmap(QPixmap(path).scaled(650,360,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation) if 'Qt' in globals() else QPixmap(path))
+        self.image.setPixmap(QPixmap(path).scaled(650,360,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation))
         self.last_vision=self.vision.predict(Image.open(path)); self.vision_out.setPlainText("\n".join(f"{x['label']}: {x['confidence']:.1%}" for x in self.last_vision))
 
     def brain_tab(self):
@@ -49,7 +48,6 @@ class PlantiniaWindow(QMainWindow):
             try: out.setPlainText(str(self.robot.move_xyz(*(s.value() for s in self.xyz))))
             except Exception as e: QMessageBox.warning(self,"Arm limit",str(e))
         move.clicked.connect(go); l.addWidget(box); l.addWidget(move); l.addWidget(out); l.addWidget(QLabel("Safety: hardware mode is disabled by default. Add a physical emergency stop and controller-side joint limits before connecting motors. Shears require a hardware interlock.")); return w
-
 
 def run():
     app=QApplication(sys.argv); win=PlantiniaWindow(); win.show(); sys.exit(app.exec())
